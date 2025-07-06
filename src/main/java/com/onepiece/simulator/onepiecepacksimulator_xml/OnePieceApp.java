@@ -5,6 +5,8 @@ import com.onepiece.simulator.onepiecepacksimulator_xml.entities.Card;
 import com.onepiece.simulator.onepiecepacksimulator_xml.entities.CardLoader;
 import com.onepiece.simulator.onepiecepacksimulator_xml.ui.PackPopupOpener;
 import com.onepiece.simulator.onepiecepacksimulator_xml.ui.PackSelectView;
+import java.io.FileInputStream;
+import java.io.ObjectInputStream;
 import javafx.application.Application;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -37,95 +39,104 @@ public class OnePieceApp extends Application {
         }
     };
 
-    @Override
-    public void start(Stage primaryStage) {
-        // --- UI COMPONENTS (Create them all upfront with no data) ---
-        tableView = createTableView();
-        setSelector = createSetSelector(); // Now creates an empty ComboBox
-        Button openPackButton = new Button("Open Pack");
-        Button resetSetButton = new Button("Reset This Set");
-        CheckBox missingOnlyCheckbox = new CheckBox("Show Only Missing Cards");
+@Override
+public void start(Stage primaryStage) {
+    // --- UI COMPONENTS (Create them all upfront with no data) ---
+    tableView = createTableView();
+    setSelector = createSetSelector(); // Now creates an empty ComboBox
+    Button openPackButton = new Button("Open Pack");
+    Button resetSetButton = new Button("Reset This Set");
+    CheckBox missingOnlyCheckbox = new CheckBox("Show Only Missing Cards");
 
-        // Disable controls until data is loaded
-        setSelector.setDisable(true);
-        openPackButton.setDisable(true);
-        resetSetButton.setDisable(true);
-        missingOnlyCheckbox.setDisable(true);
+    // Disable controls until data is loaded
+    setSelector.setDisable(true);
+    openPackButton.setDisable(true);
+    resetSetButton.setDisable(true);
+    missingOnlyCheckbox.setDisable(true);
 
-        // --- LAYOUT ---
-        HBox controls = new HBox(10, setSelector, openPackButton, resetSetButton, missingOnlyCheckbox);
-        controls.setPadding(new Insets(10));
+    // --- LAYOUT ---
+    HBox controls = new HBox(10, setSelector, openPackButton, resetSetButton, missingOnlyCheckbox);
+    controls.setPadding(new Insets(10));
 
-        ProgressIndicator loadingIndicator = new ProgressIndicator();
-        loadingIndicator.setMaxSize(100, 100);
+    ProgressIndicator loadingIndicator = new ProgressIndicator();
+    loadingIndicator.setMaxSize(100, 100);
 
-        BorderPane root = new BorderPane();
-        root.setTop(controls);
-        root.setCenter(loadingIndicator);
+    BorderPane root = new BorderPane();
+    root.setTop(controls);
+    root.setCenter(loadingIndicator);
 
-        // --- BACKGROUND DATA LOADING TASK ---
-        Task<List<Card>> loadCardsTask = new Task<>() {
-            @Override
-            protected List<Card> call() {
-                System.out.println("Loading cards in background...");
-                List<Card> loadedCards = CardLoader.loadCards("/OnePieceCards.xml");
+    // --- BACKGROUND DATA LOADING TASK ---
+    Task<List<Card>> loadCardsTask = new Task<>() {
+        @Override
+        protected List<Card> call() {
+            System.out.println("Loading cards in background...");
+            // This reads the new, fast binary file
+            try (FileInputStream fis = new FileInputStream("cards.bin");
+                 ObjectInputStream ois = new ObjectInputStream(fis)) {
+                 
+                List<Card> loadedCards = (List<Card>) ois.readObject();
                 System.out.println("Card loading complete.");
                 return loadedCards;
+            } catch (Exception e) {
+                // If the binary file doesn't exist, fall back to the slow XML
+                System.err.println("Could not load from binary file, falling back to XML. Run DataConverter to fix.");
+                return CardLoader.loadCards("/OnePieceCards.xml");
             }
-        };
+        }
+    };
 
-        // --- ACTIONS AFTER TASK COMPLETES ---
-        loadCardsTask.setOnSucceeded(e -> {
-            allCards = FXCollections.observableArrayList(loadCardsTask.getValue());
-            CardStorage.loadProgress(allCards);
-            
-            filteredCards = new FilteredList<>(allCards, p -> true);
-            tableView.setItems(filteredCards);
+    // --- ACTIONS AFTER TASK COMPLETES ---
+    loadCardsTask.setOnSucceeded(e -> {
+        allCards = FXCollections.observableArrayList(loadCardsTask.getValue());
+        CardStorage.loadProgress(allCards);
+        
+        filteredCards = new FilteredList<>(allCards, p -> true);
+        tableView.setItems(filteredCards);
 
-            // **FIX**: Populate the set selector now that allCards exists
-            Set<String> setNames = allCards.stream()
-                    .map(card -> card.seriesNameProperty().get())
-                    .collect(Collectors.toCollection(TreeSet::new));
-            List<String> sortedSets = new ArrayList<>(setNames);
-            sortedSets.add(0, "All Sets");
-            setSelector.setItems(FXCollections.observableArrayList(sortedSets));
-            setSelector.setValue("All Sets");
+        // Populate the set selector now that allCards exists
+        Set<String> setNames = allCards.stream()
+                .map(card -> card.seriesNameProperty().get())
+                .collect(Collectors.toCollection(TreeSet::new));
+        List<String> sortedSets = new ArrayList<>(setNames);
+        sortedSets.add(0, "All Sets");
+        setSelector.setItems(FXCollections.observableArrayList(sortedSets));
+        setSelector.setValue("All Sets");
 
-            // Re-enable the UI
-            root.setCenter(tableView);
-            setSelector.setDisable(false);
-            openPackButton.setDisable(false);
-            resetSetButton.setDisable(false);
-            missingOnlyCheckbox.setDisable(false);
-            System.out.println("UI updated with loaded cards.");
-            
-            // Wire up event handlers that need the data
-            setSelector.setOnAction(event -> filterBySet());
-            resetSetButton.setOnAction(event -> confirmReset());
-            missingOnlyCheckbox.setOnAction(event -> applyMissingFilter(missingOnlyCheckbox.isSelected()));
-            openPackButton.setOnAction(event -> openPackAction());
-        });
+        // Re-enable the UI
+        root.setCenter(tableView);
+        setSelector.setDisable(false);
+        openPackButton.setDisable(false);
+        resetSetButton.setDisable(false);
+        missingOnlyCheckbox.setDisable(false);
+        System.out.println("UI updated with loaded cards.");
+        
+        // Wire up event handlers that need the data
+        setSelector.setOnAction(event -> filterBySet());
+        resetSetButton.setOnAction(event -> confirmReset());
+        missingOnlyCheckbox.setOnAction(event -> applyMissingFilter(missingOnlyCheckbox.isSelected()));
+        openPackButton.setOnAction(event -> openPackAction());
+    });
 
-        loadCardsTask.setOnFailed(e -> {
-            Throwable error = loadCardsTask.getException();
-            System.err.println("Failed to load cards:");
-            error.printStackTrace();
-            root.setCenter(new Label("Error: Could not load card data. Check logs for details."));
-        });
+    loadCardsTask.setOnFailed(e -> {
+        Throwable error = loadCardsTask.getException();
+        System.err.println("Failed to load cards:");
+        error.printStackTrace();
+        root.setCenter(new Label("Error: Could not load card data. Check logs for details."));
+    });
 
-        // --- SHOW THE STAGE & START THE TASK ---
-        Scene scene = new Scene(root, 1200, 600);
-        primaryStage.setScene(scene);
-        primaryStage.setTitle("One Piece Pack Simulator");
-        primaryStage.setOnCloseRequest(e -> {
-            if (allCards != null) {
-                CardStorage.saveProgress(allCards);
-            }
-        });
-        primaryStage.show();
+    // --- SHOW THE STAGE & START THE TASK ---
+    Scene scene = new Scene(root, 1200, 600);
+    primaryStage.setScene(scene);
+    primaryStage.setTitle("One Piece Pack Simulator");
+    primaryStage.setOnCloseRequest(e -> {
+        if (allCards != null) {
+            CardStorage.saveProgress(allCards);
+        }
+    });
+    primaryStage.show();
 
-        new Thread(loadCardsTask).start();
-    }
+    new Thread(loadCardsTask).start();
+}
     
     // **FIX**: This method now just creates an empty ComboBox
     private ComboBox<String> createSetSelector() {
