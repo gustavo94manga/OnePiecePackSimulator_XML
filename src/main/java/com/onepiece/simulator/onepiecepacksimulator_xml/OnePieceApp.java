@@ -5,13 +5,10 @@ import com.onepiece.simulator.onepiecepacksimulator_xml.entities.Card;
 import com.onepiece.simulator.onepiecepacksimulator_xml.entities.CardLoader;
 import com.onepiece.simulator.onepiecepacksimulator_xml.ui.PackPopupOpener;
 import com.onepiece.simulator.onepiecepacksimulator_xml.ui.PackSelectView;
-import java.io.FileInputStream;
-import java.io.ObjectInputStream;
 import javafx.application.Application;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
-import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
@@ -32,6 +29,7 @@ public class OnePieceApp extends Application {
     private TableView<Card> tableView;
     private ComboBox<String> setSelector;
     private FilteredList<Card> filteredCards;
+    private boolean cardsHaveBeenLoaded = false; // Flag to track if we've loaded the data yet
     private final Map<String, Image> imageCache = new LinkedHashMap<>() {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Image> eldest) {
@@ -39,114 +37,107 @@ public class OnePieceApp extends Application {
         }
     };
 
-@Override
-public void start(Stage primaryStage) {
-    // --- UI COMPONENTS (Create them all upfront with no data) ---
-    tableView = createTableView();
-    setSelector = createSetSelector(); // Now creates an empty ComboBox
-    Button openPackButton = new Button("Open Pack");
-    Button resetSetButton = new Button("Reset This Set");
-    CheckBox missingOnlyCheckbox = new CheckBox("Show Only Missing Cards");
-
-    // Disable controls until data is loaded
-    setSelector.setDisable(true);
-    openPackButton.setDisable(true);
-    resetSetButton.setDisable(true);
-    missingOnlyCheckbox.setDisable(true);
-
-    // --- LAYOUT ---
-    HBox controls = new HBox(10, setSelector, openPackButton, resetSetButton, missingOnlyCheckbox);
-    controls.setPadding(new Insets(10));
-
-    ProgressIndicator loadingIndicator = new ProgressIndicator();
-    loadingIndicator.setMaxSize(100, 100);
-
-    BorderPane root = new BorderPane();
-    root.setTop(controls);
-    root.setCenter(loadingIndicator);
-
-    // --- BACKGROUND DATA LOADING TASK ---
-    Task<List<Card>> loadCardsTask = new Task<>() {
-        @Override
-        protected List<Card> call() {
-            System.out.println("Loading cards in background...");
-            // This reads the new, fast binary file
-            try (FileInputStream fis = new FileInputStream("cards.bin");
-                 ObjectInputStream ois = new ObjectInputStream(fis)) {
-                 
-                List<Card> loadedCards = (List<Card>) ois.readObject();
-                System.out.println("Card loading complete.");
-                return loadedCards;
-            } catch (Exception e) {
-                // If the binary file doesn't exist, fall back to the slow XML
-                System.err.println("Could not load from binary file, falling back to XML. Run DataConverter to fix.");
-                return CardLoader.loadCards("/OnePieceCards.xml");
-            }
-        }
-    };
-
-    // --- ACTIONS AFTER TASK COMPLETES ---
-    loadCardsTask.setOnSucceeded(e -> {
-        allCards = FXCollections.observableArrayList(loadCardsTask.getValue());
-        CardStorage.loadProgress(allCards);
-        
+    @Override
+    public void start(Stage primaryStage) {
+        // --- STARTUP (Fast) ---
+        // Start with an empty list. The app will load instantly.
+        allCards = FXCollections.observableArrayList();
         filteredCards = new FilteredList<>(allCards, p -> true);
+
+        // --- UI COMPONENTS ---
+        tableView = createTableView();
         tableView.setItems(filteredCards);
 
-        // Populate the set selector now that allCards exists
-        Set<String> setNames = allCards.stream()
-                .map(card -> card.seriesNameProperty().get())
-                .collect(Collectors.toCollection(TreeSet::new));
-        List<String> sortedSets = new ArrayList<>(setNames);
-        sortedSets.add(0, "All Sets");
-        setSelector.setItems(FXCollections.observableArrayList(sortedSets));
-        setSelector.setValue("All Sets");
+        setSelector = createSetSelector(); // Creates a pre-populated selector
+        Button openPackButton = new Button("Open Pack");
+        Button resetSetButton = new Button("Reset This Set");
+        CheckBox missingOnlyCheckbox = new CheckBox("Show Only Missing Cards");
 
-        // Re-enable the UI
+        // --- UI ACTIONS ---
+        // The filterBySet method now handles the lazy loading
+        setSelector.setOnAction(e -> filterBySet());
+        resetSetButton.setOnAction(e -> confirmReset());
+        missingOnlyCheckbox.setOnAction(e -> applyMissingFilter(missingOnlyCheckbox.isSelected()));
+        openPackButton.setOnAction(e -> openPackAction());
+
+        // --- LAYOUT ---
+        HBox controls = new HBox(10, setSelector, openPackButton, resetSetButton, missingOnlyCheckbox);
+        controls.setPadding(new Insets(10));
+
+        BorderPane root = new BorderPane();
+        root.setTop(controls);
         root.setCenter(tableView);
-        setSelector.setDisable(false);
-        openPackButton.setDisable(false);
-        resetSetButton.setDisable(false);
-        missingOnlyCheckbox.setDisable(false);
-        System.out.println("UI updated with loaded cards.");
-        
-        // Wire up event handlers that need the data
-        setSelector.setOnAction(event -> filterBySet());
-        resetSetButton.setOnAction(event -> confirmReset());
-        missingOnlyCheckbox.setOnAction(event -> applyMissingFilter(missingOnlyCheckbox.isSelected()));
-        openPackButton.setOnAction(event -> openPackAction());
-    });
 
-    loadCardsTask.setOnFailed(e -> {
-        Throwable error = loadCardsTask.getException();
-        System.err.println("Failed to load cards:");
-        error.printStackTrace();
-        root.setCenter(new Label("Error: Could not load card data. Check logs for details."));
-    });
+        // --- SHOW THE STAGE ---
+        Scene scene = new Scene(root, 1200, 600);
+        primaryStage.setScene(scene);
+        primaryStage.setTitle("One Piece Pack Simulator");
+        primaryStage.setOnCloseRequest(e -> {
+            if (allCards != null && !allCards.isEmpty()) {
+                CardStorage.saveProgress(allCards);
+            }
+        });
+        primaryStage.show();
+    }
 
-    // --- SHOW THE STAGE & START THE TASK ---
-    Scene scene = new Scene(root, 1200, 600);
-    primaryStage.setScene(scene);
-    primaryStage.setTitle("One Piece Pack Simulator");
-    primaryStage.setOnCloseRequest(e -> {
-        if (allCards != null) {
-            CardStorage.saveProgress(allCards);
+    /**
+     * This method now handles the lazy loading. The first time a filter is selected,
+     * it loads all the cards. After that, it just filters the existing list.
+     */
+    private void filterBySet() {
+        // Check if we need to perform the one-time data load
+        if (!cardsHaveBeenLoaded) {
+            System.out.println("First time filter selected. LAZY LOADING all card data now...");
+            List<Card> loadedCards = CardLoader.loadCards("/OnePieceCards.xml");
+            allCards.setAll(loadedCards); // Populate the main list
+            CardStorage.loadProgress(allCards); // Load user's saved quantities
+            cardsHaveBeenLoaded = true; // Set flag so we don't load again
+            System.out.println("Lazy loading complete. " + allCards.size() + " cards are now in memory.");
         }
-    });
-    primaryStage.show();
 
-    new Thread(loadCardsTask).start();
-}
-    
-    // **FIX**: This method now just creates an empty ComboBox
+        String selectedSet = setSelector.getValue();
+        if (selectedSet == null || "Select a Set".equals(selectedSet) || "All Sets".equals(selectedSet)) {
+            filteredCards.setPredicate(card -> true);
+        } else {
+            filteredCards.setPredicate(card -> card.seriesNameProperty().get().equals(selectedSet));
+        }
+    }
+
     private ComboBox<String> createSetSelector() {
-        ComboBox<String> comboBox = new ComboBox<>();
-        comboBox.setPromptText("Loading Sets...");
+        // We pre-populate the list of sets so the app doesn't have to read the XML to find them.
+        List<String> setNames = List.of(
+            "All Sets",
+            "ROMANCE DAWN- [OP-01]", "PARAMOUNT WAR- [OP-02]", "PILLARS OF STRENGTH- [OP-03]",
+            "KINGDOMS OF INTRIGUE- [OP-04]", "AWAKENING OF THE NEW ERA- [OP-05]", "WINGS OF THE CAPTAIN- [OP-06]",
+            "500 YEARS IN THE FUTURE- [OP-07]", "TWO LEGENDS- [OP-08]",
+            "MEMORIAL COLLECTION- [EB-01]",
+            "ONE PIECE CARD THE BEST- [PRB-01]",
+            "Starter Deck STRAW HAT CREW- [ST-01]", "Starter Deck WORST GENERATION- [ST-02]",
+            "Starter Deck THE SEVEN WARLORDS OF THE SEA- [ST-03]", "Starter Deck ANIMAL KINGDOM PIRATES- [ST-04]",
+            "Starter Deck ONE PIECE FILM RED- [ST-05]", "Starter Deck NAVY- [ST-06]",
+            "Starter Deck BIG MOM PIRATES- [ST-07]", "Starter Deck LUFFY- [ST-08]",
+            "Starter Deck YAMATO- [ST-09]", "ULTIMATE DECK THE THREE CAPTAINS- [ST-10]",
+            "Starter Deck UTA- [ST-11]", "Starter Deck ZORO & SANJI- [ST-12]",
+            "ULTIMATE DECK THE THREE BROTHERS- [ST-13]"
+        );
+
+        List<String> sortedSetNames = setNames.stream()
+                .filter(name -> !name.equals("All Sets"))
+                .sorted()
+                .collect(Collectors.toList());
+        sortedSetNames.add(0, "All Sets");
+
+        ComboBox<String> comboBox = new ComboBox<>(FXCollections.observableArrayList(sortedSetNames));
+        comboBox.setPromptText("Select a Set");
         return comboBox;
     }
-    
-    // **NEW**: Extracted the openPack button's logic into its own method
+
     private void openPackAction() {
+        if (!cardsHaveBeenLoaded) {
+            new Alert(Alert.AlertType.INFORMATION, "Please select a set from the dropdown menu first to load the card database.").showAndWait();
+            return;
+        }
+
         Map<String, String> packLabels = new TreeMap<>();
         for (Card card : allCards) {
             String fullName = card.seriesNameProperty().get();
@@ -181,6 +172,7 @@ public void start(Stage primaryStage) {
             }
     
             String packImageUrl = "https://cdn.onepiece-cardgame.com/images/pack/thumbnail_OP-05.png";
+            
             PackPopupOpener.openPack(packImageUrl, pulledCards, cards -> {
                 for (Card c : cards) {
                     c.incrementQuantity();
@@ -192,7 +184,6 @@ public void start(Stage primaryStage) {
 
     private TableView<Card> createTableView() {
         TableView<Card> table = new TableView<>();
-        // This is fine, as table items will be set later.
         TableColumn<Card, String> imageCol = new TableColumn<>("Card Image");
         imageCol.setCellValueFactory(data -> data.getValue().imageUrlProperty());
         imageCol.setCellFactory(col -> new TableCell<>() {
@@ -259,16 +250,9 @@ public void start(Stage primaryStage) {
         return table;
     }
 
-    private void filterBySet() {
-        String selectedSet = setSelector.getValue();
-        if (selectedSet == null || "All Sets".equals(selectedSet)) {
-            filteredCards.setPredicate(card -> true);
-        } else {
-            filteredCards.setPredicate(card -> card.seriesNameProperty().get().equals(selectedSet));
-        }
-    }
-
     private void applyMissingFilter(boolean missingOnly) {
+        if (!cardsHaveBeenLoaded) return; 
+
         String selectedSet = setSelector.getValue();
         if (selectedSet == null) return;
         
@@ -280,6 +264,8 @@ public void start(Stage primaryStage) {
     }
     
     private void confirmReset() {
+        if (!cardsHaveBeenLoaded) return;
+
         String selectedSet = setSelector.getValue();
         if (selectedSet == null || "All Sets".equals(selectedSet)) return;
 
