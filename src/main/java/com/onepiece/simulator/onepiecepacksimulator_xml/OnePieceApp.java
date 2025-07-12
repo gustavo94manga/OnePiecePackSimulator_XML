@@ -29,7 +29,7 @@ public class OnePieceApp extends Application {
     private TableView<Card> tableView;
     private ComboBox<String> setSelector;
     private FilteredList<Card> filteredCards;
-    private boolean cardsHaveBeenLoaded = false; // Flag to track if we've loaded the data yet
+    private boolean cardsHaveBeenLoaded = false; // Flag to control the one-time load
     private final Map<String, Image> imageCache = new LinkedHashMap<>() {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Image> eldest) {
@@ -39,23 +39,22 @@ public class OnePieceApp extends Application {
 
     @Override
     public void start(Stage primaryStage) {
-        // --- STARTUP (Fast) ---
-        // Start with an empty list. The app will load instantly.
+        // --- FAST STARTUP ---
         allCards = FXCollections.observableArrayList();
         filteredCards = new FilteredList<>(allCards, p -> true);
 
         // --- UI COMPONENTS ---
         tableView = createTableView();
         tableView.setItems(filteredCards);
+        tableView.setPlaceholder(new Label("Please select a set from the dropdown menu to display cards."));
 
-        setSelector = createSetSelector(); // Creates a pre-populated selector
+        setSelector = createSetSelector(); // Uses a hardcoded list for speed
         Button openPackButton = new Button("Open Pack");
         Button resetSetButton = new Button("Reset This Set");
         CheckBox missingOnlyCheckbox = new CheckBox("Show Only Missing Cards");
 
         // --- UI ACTIONS ---
-        // The filterBySet method now handles the lazy loading
-        setSelector.setOnAction(e -> filterBySet());
+        setSelector.setOnAction(e -> handleSetSelection());
         resetSetButton.setOnAction(e -> confirmReset());
         missingOnlyCheckbox.setOnAction(e -> applyMissingFilter(missingOnlyCheckbox.isSelected()));
         openPackButton.setOnAction(e -> openPackAction());
@@ -63,10 +62,8 @@ public class OnePieceApp extends Application {
         // --- LAYOUT ---
         HBox controls = new HBox(10, setSelector, openPackButton, resetSetButton, missingOnlyCheckbox);
         controls.setPadding(new Insets(10));
-
-        BorderPane root = new BorderPane();
+        BorderPane root = new BorderPane(tableView);
         root.setTop(controls);
-        root.setCenter(tableView);
 
         // --- SHOW THE STAGE ---
         Scene scene = new Scene(root, 1200, 600);
@@ -81,63 +78,62 @@ public class OnePieceApp extends Application {
     }
 
     /**
-     * This method now handles the lazy loading. The first time a filter is selected,
-     * it loads all the cards. After that, it just filters the existing list.
+     * This method handles the logic for loading all cards into memory ONCE,
+     * the very first time a set is selected.
+     */
+    private void handleSetSelection() {
+        if (!cardsHaveBeenLoaded) {
+            System.out.println("First-time selection detected. Lazy loading all card data into memory...");
+            List<Card> loadedCards = CardLoader.loadCards("/OnePieceCards.xml");
+            if (loadedCards.isEmpty()) {
+                new Alert(Alert.AlertType.ERROR, "Failed to load card data. The application cannot proceed.").showAndWait();
+                return;
+            }
+            allCards.setAll(loadedCards);
+            CardStorage.loadProgress(allCards);
+            cardsHaveBeenLoaded = true;
+            System.out.println("Lazy loading complete. " + allCards.size() + " cards are now ready.");
+        }
+        // After the one-time load, this just filters the view, which is instantaneous.
+        filterBySet();
+    }
+
+    /**
+     * Filters the already-loaded card list based on the dropdown selection.
      */
     private void filterBySet() {
-        // Check if we need to perform the one-time data load
-        if (!cardsHaveBeenLoaded) {
-            System.out.println("First time filter selected. LAZY LOADING all card data now...");
-            List<Card> loadedCards = CardLoader.loadCards("/OnePieceCards.xml");
-            allCards.setAll(loadedCards); // Populate the main list
-            CardStorage.loadProgress(allCards); // Load user's saved quantities
-            cardsHaveBeenLoaded = true; // Set flag so we don't load again
-            System.out.println("Lazy loading complete. " + allCards.size() + " cards are now in memory.");
-        }
-
         String selectedSet = setSelector.getValue();
-        if (selectedSet == null || "Select a Set".equals(selectedSet) || "All Sets".equals(selectedSet)) {
-            filteredCards.setPredicate(card -> true);
-        } else {
-            filteredCards.setPredicate(card -> card.seriesNameProperty().get().equals(selectedSet));
-        }
+        if (selectedSet == null) return;
+        
+        filteredCards.setPredicate(card -> card.seriesNameProperty().get().equals(selectedSet));
     }
 
     private ComboBox<String> createSetSelector() {
-        // We pre-populate the list of sets so the app doesn't have to read the XML to find them.
         List<String> setNames = List.of(
-            "All Sets",
-            "ROMANCE DAWN- [OP-01]", "PARAMOUNT WAR- [OP-02]", "PILLARS OF STRENGTH- [OP-03]",
-            "KINGDOMS OF INTRIGUE- [OP-04]", "AWAKENING OF THE NEW ERA- [OP-05]", "WINGS OF THE CAPTAIN- [OP-06]",
-            "500 YEARS IN THE FUTURE- [OP-07]", "TWO LEGENDS- [OP-08]",
-            "MEMORIAL COLLECTION- [EB-01]",
-            "ONE PIECE CARD THE BEST- [PRB-01]",
-            "Starter Deck STRAW HAT CREW- [ST-01]", "Starter Deck WORST GENERATION- [ST-02]",
-            "Starter Deck THE SEVEN WARLORDS OF THE SEA- [ST-03]", "Starter Deck ANIMAL KINGDOM PIRATES- [ST-04]",
-            "Starter Deck ONE PIECE FILM RED- [ST-05]", "Starter Deck NAVY- [ST-06]",
-            "Starter Deck BIG MOM PIRATES- [ST-07]", "Starter Deck LUFFY- [ST-08]",
-            "Starter Deck YAMATO- [ST-09]", "ULTIMATE DECK THE THREE CAPTAINS- [ST-10]",
-            "Starter Deck UTA- [ST-11]", "Starter Deck ZORO & SANJI- [ST-12]",
-            "ULTIMATE DECK THE THREE BROTHERS- [ST-13]"
+            "ROMANCE DAWN- [OP-01]", "PARAMOUNT WAR- [OP-02]", 
+            "PILLARS OF STRENGTH- [OP-03]", "KINGDOMS OF INTRIGUE- [OP-04]", 
+            "AWAKENING OF THE NEW ERA- [OP-05]", "WINGS OF THE CAPTAIN- [OP-06]", 
+            "500 YEARS IN THE FUTURE- [OP-07]", "TWO LEGENDS- [OP-08]", 
+            "Starter Deck ANIMAL KINGDOM PIRATES- [ST-04]", "Starter Deck ONE PIECE FILM RED- [ST-05]", 
+            "Starter Deck THE SEVEN WARLORDS OF THE SEA- [ST-03]", "Starter Deck WORST GENERATION- [ST-02]", 
+            "Starter Deck STRAW HAT CREW- [ST-01]", "Starter Deck ZORO & SANJI- [ST-12]", 
+            "Starter Deck THE THREE CAPTAINS- [ST-10]", "Starter Deck YAMATO- [ST-09]", 
+            "Starter Deck BIG MOM PIRATES- [ST-07]", "Starter Deck NAVY- [ST-06]", 
+            "Starter Deck UTA- [ST-11]", "Starter Deck LUFFY- [ST-08]"
         );
-
-        List<String> sortedSetNames = setNames.stream()
-                .filter(name -> !name.equals("All Sets"))
-                .sorted()
-                .collect(Collectors.toList());
-        sortedSetNames.add(0, "All Sets");
-
+        
+        List<String> sortedSetNames = setNames.stream().sorted().collect(Collectors.toList());
+        
         ComboBox<String> comboBox = new ComboBox<>(FXCollections.observableArrayList(sortedSetNames));
-        comboBox.setPromptText("Select a Set");
+        comboBox.setPromptText("Select a Set to Load Cards");
         return comboBox;
     }
 
     private void openPackAction() {
         if (!cardsHaveBeenLoaded) {
-            new Alert(Alert.AlertType.INFORMATION, "Please select a set from the dropdown menu first to load the card database.").showAndWait();
+            new Alert(Alert.AlertType.INFORMATION, "Please select a set from the dropdown to load the card database first.").showAndWait();
             return;
         }
-
         Map<String, String> packLabels = new TreeMap<>();
         for (Card card : allCards) {
             String fullName = card.seriesNameProperty().get();
@@ -147,38 +143,44 @@ public class OnePieceApp extends Application {
                 packLabels.put(code, label);
             }
         }
-        
         PackSelectView.show(packLabels, selectedCode -> {
-            List<Card> cardPool = allCards.stream()
-                    .filter(card -> card.seriesNameProperty().get().replace(" ", "")
-                            .contains("[" + selectedCode + "]"))
-                    .toList();
-    
-            if (cardPool.isEmpty()) {
-                new Alert(Alert.AlertType.WARNING, "No cards found for set: " + selectedCode).showAndWait();
-                return;
-            }
-    
+            List<Card> cardPool = allCards.stream().filter(card -> card.seriesNameProperty().get().replace(" ", "").contains("[" + selectedCode + "]")).toList();
+            if (cardPool.isEmpty()) { new Alert(Alert.AlertType.WARNING, "No cards found for set: " + selectedCode).showAndWait(); return; }
             List<Card> pulledCards = new ArrayList<>();
             boolean isStarterDeck = selectedCode.startsWith("ST-");
-    
-            if (isStarterDeck) {
-                pulledCards.addAll(cardPool);
-            } else {
+            if (isStarterDeck) { pulledCards.addAll(cardPool); } else {
                 Random random = new Random();
-                for (int i = 0; i < 12 && !cardPool.isEmpty(); i++) {
-                    pulledCards.add(cardPool.get(random.nextInt(cardPool.size())));
-                }
+                for (int i = 0; i < 12 && !cardPool.isEmpty(); i++) { pulledCards.add(cardPool.get(random.nextInt(cardPool.size()))); }
             }
-    
-            String packImageUrl = "https://cdn.onepiece-cardgame.com/images/pack/thumbnail_OP-05.png";
-            
-            PackPopupOpener.openPack(packImageUrl, pulledCards, cards -> {
-                for (Card c : cards) {
-                    c.incrementQuantity();
-                }
+            PackPopupOpener.openPack("https://cdn.onepiece-cardgame.com/images/pack/thumbnail_OP-05.png", pulledCards, cards -> {
+                for (Card c : cards) { c.incrementQuantity(); }
                 tableView.refresh();
             });
+        });
+    }
+
+    private void applyMissingFilter(boolean missingOnly) {
+        if (!cardsHaveBeenLoaded) return;
+        String selectedSet = setSelector.getValue();
+        if (selectedSet == null) return;
+        filteredCards.setPredicate(card -> {
+            boolean inSet = card.seriesNameProperty().get().equals(selectedSet);
+            boolean isMissing = card.quantityOwnedProperty().get() == 0;
+            return missingOnly ? inSet && isMissing : inSet;
+        });
+    }
+    
+    private void confirmReset() {
+        if (!cardsHaveBeenLoaded) return;
+        String selectedSet = setSelector.getValue();
+        if (selectedSet == null) return;
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Are you sure? This will reset all cards in this set to 0.", new ButtonType("Yes, Reset"), ButtonType.CANCEL);
+        alert.setHeaderText("Reset collection for set: " + selectedSet);
+        alert.showAndWait().ifPresent(response -> {
+            if (response.getText().equals("Yes, Reset")) {
+                allCards.stream().filter(card -> card.seriesNameProperty().get().equals(selectedSet)).forEach(Card::resetQuantity);
+                tableView.refresh();
+            }
         });
     }
 
@@ -189,46 +191,29 @@ public class OnePieceApp extends Application {
         imageCol.setCellFactory(col -> new TableCell<>() {
             private final ImageView imageView = new ImageView();
             private final StackPane clickablePane = new StackPane(imageView);
-            private String currentImageUrl = null;
-
             {
                 imageView.setFitHeight(90);
                 imageView.setFitWidth(60);
                 imageView.setPreserveRatio(true);
                 imageView.setCache(true);
-
                 clickablePane.setOnMouseClicked(event -> {
-                    if (currentImageUrl != null && !currentImageUrl.isEmpty()) {
-                        Image fullImage = new Image(currentImageUrl, true);
-                        ImageView expandedView = new ImageView(fullImage);
+                    String url = getItem();
+                    if (url != null && !url.isEmpty()) {
+                        ImageView expandedView = new ImageView(new Image(url, true));
                         expandedView.setPreserveRatio(true);
                         expandedView.setFitWidth(400);
-
-                        StackPane pane = new StackPane(expandedView);
-                        Scene scene = new Scene(pane, 420, 600);
-
                         Stage popup = new Stage();
-                        popup.setTitle("Card View");
-                        popup.setScene(scene);
                         popup.initModality(Modality.APPLICATION_MODAL);
+                        popup.setScene(new Scene(new StackPane(expandedView)));
                         popup.showAndWait();
                     }
                 });
             }
-
             @Override
             protected void updateItem(String imageUrl, boolean empty) {
                 super.updateItem(imageUrl, empty);
-                if (empty || imageUrl == null || imageUrl.isEmpty()) {
-                    setGraphic(null);
-                    currentImageUrl = null;
-                } else {
-                    currentImageUrl = imageUrl;
-                    Image image = imageCache.get(imageUrl);
-                    if (image == null) {
-                        image = new Image(imageUrl, 60, 90, true, true, true);
-                        imageCache.put(imageUrl, image);
-                    }
+                if (empty || imageUrl == null) { setGraphic(null); } else {
+                    Image image = imageCache.computeIfAbsent(imageUrl, url -> new Image(url, 60, 90, true, true, true));
                     imageView.setImage(image);
                     setGraphic(clickablePane);
                 }
@@ -245,45 +230,8 @@ public class OnePieceApp extends Application {
         colorCol.setCellValueFactory(data -> data.getValue().colorProperty());
         TableColumn<Card, Number> quantityCol = new TableColumn<>("Quantity Owned");
         quantityCol.setCellValueFactory(data -> data.getValue().quantityOwnedProperty());
-
         table.getColumns().setAll(List.of(imageCol, nameCol, rarityCol, typeCol, colorCol, quantityCol));
         return table;
-    }
-
-    private void applyMissingFilter(boolean missingOnly) {
-        if (!cardsHaveBeenLoaded) return; 
-
-        String selectedSet = setSelector.getValue();
-        if (selectedSet == null) return;
-        
-        filteredCards.setPredicate(card -> {
-            boolean inSet = "All Sets".equals(selectedSet) || card.seriesNameProperty().get().equals(selectedSet);
-            boolean isMissing = card.quantityOwnedProperty().get() == 0;
-            return missingOnly ? inSet && isMissing : inSet;
-        });
-    }
-    
-    private void confirmReset() {
-        if (!cardsHaveBeenLoaded) return;
-
-        String selectedSet = setSelector.getValue();
-        if (selectedSet == null || "All Sets".equals(selectedSet)) return;
-
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, 
-            "Are you sure? This will reset all cards in this set to 0.", 
-            new ButtonType("Yes, Reset"), 
-            ButtonType.CANCEL);
-        alert.setTitle("Reset Confirmation");
-        alert.setHeaderText("Reset collection for set: " + selectedSet);
-
-        alert.showAndWait().ifPresent(response -> {
-            if (response.getText().equals("Yes, Reset")) {
-                allCards.stream()
-                        .filter(card -> card.seriesNameProperty().get().equals(selectedSet))
-                        .forEach(Card::resetQuantity);
-                tableView.refresh();
-            }
-        });
     }
 
     public static void main(String[] args) {
