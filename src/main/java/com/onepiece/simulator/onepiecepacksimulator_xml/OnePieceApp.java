@@ -184,36 +184,54 @@ public class OnePieceApp extends Application {
         });
     }
 
-    private TableView<Card> createTableView() {
+      private TableView<Card> createTableView() {
         TableView<Card> table = new TableView<>();
+        // This is fine, as table items will be set later.
         TableColumn<Card, String> imageCol = new TableColumn<>("Card Image");
         imageCol.setCellValueFactory(data -> data.getValue().imageUrlProperty());
         imageCol.setCellFactory(col -> new TableCell<>() {
             private final ImageView imageView = new ImageView();
             private final StackPane clickablePane = new StackPane(imageView);
+            private String currentImageUrl = null;
+
             {
                 imageView.setFitHeight(90);
                 imageView.setFitWidth(60);
                 imageView.setPreserveRatio(true);
                 imageView.setCache(true);
+
                 clickablePane.setOnMouseClicked(event -> {
-                    String url = getItem();
-                    if (url != null && !url.isEmpty()) {
-                        ImageView expandedView = new ImageView(new Image(url, true));
+                    if (currentImageUrl != null && !currentImageUrl.isEmpty()) {
+                        Image fullImage = new Image(currentImageUrl, true);
+                        ImageView expandedView = new ImageView(fullImage);
                         expandedView.setPreserveRatio(true);
                         expandedView.setFitWidth(400);
+
+                        StackPane pane = new StackPane(expandedView);
+                        Scene scene = new Scene(pane, 420, 600);
+
                         Stage popup = new Stage();
+                        popup.setTitle("Card View");
+                        popup.setScene(scene);
                         popup.initModality(Modality.APPLICATION_MODAL);
-                        popup.setScene(new Scene(new StackPane(expandedView)));
                         popup.showAndWait();
                     }
                 });
             }
+
             @Override
             protected void updateItem(String imageUrl, boolean empty) {
                 super.updateItem(imageUrl, empty);
-                if (empty || imageUrl == null) { setGraphic(null); } else {
-                    Image image = imageCache.computeIfAbsent(imageUrl, url -> new Image(url, 60, 90, true, true, true));
+                if (empty || imageUrl == null || imageUrl.isEmpty()) {
+                    setGraphic(null);
+                    currentImageUrl = null;
+                } else {
+                    currentImageUrl = imageUrl;
+                    Image image = imageCache.get(imageUrl);
+                    if (image == null) {
+                        image = new Image(imageUrl, 60, 90, true, true, true);
+                        imageCache.put(imageUrl, image);
+                    }
                     imageView.setImage(image);
                     setGraphic(clickablePane);
                 }
@@ -230,6 +248,7 @@ public class OnePieceApp extends Application {
         colorCol.setCellValueFactory(data -> data.getValue().colorProperty());
         TableColumn<Card, Number> quantityCol = new TableColumn<>("Quantity Owned");
         quantityCol.setCellValueFactory(data -> data.getValue().quantityOwnedProperty());
+
         table.getColumns().setAll(List.of(imageCol, nameCol, rarityCol, typeCol, colorCol, quantityCol));
         return table;
     }
