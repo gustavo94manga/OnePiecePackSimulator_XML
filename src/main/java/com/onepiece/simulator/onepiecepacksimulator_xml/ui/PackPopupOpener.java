@@ -115,10 +115,9 @@ public class PackPopupOpener {
         layout.setAlignment(Pos.CENTER);
         Scene scene = new Scene(layout, 500, 600);
         stage.setScene(scene);
-        stage.showAndWait(); // Use showAndWait to keep focus
+        stage.showAndWait(); 
     }
 
-    // Starter Deck and Full Card view methods are unchanged and stable
     private static void showAllCardsInGrid(List<Card> cards, Consumer<List<Card>> onDone) {
         Stage stage = new Stage();
         stage.initModality(Modality.APPLICATION_MODAL);
